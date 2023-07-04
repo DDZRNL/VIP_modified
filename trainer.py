@@ -40,7 +40,7 @@ class Trainer():
         self.alpha=0.005
         self.vf = ValueFunction(obs_dim, hidden_dim=64, n_hidden=2).to(DEFAULT_DEVICE)
         self.qf = TwinQ(obs_dim, hidden_dim=64, n_hidden=2).to(DEFAULT_DEVICE)
-        self.q_target = copy.deepcopy(self.qf).requires_grad_(False).to(DEFAULT_DEVICE)
+        self.v_target = copy.deepcopy(self.vf).requires_grad_(False).to(DEFAULT_DEVICE)
         self.v_optimizer = optimizer_factory(self.vf.parameters())  
         self.q_optimizer = optimizer_factory(self.qf.parameters())
 
@@ -70,17 +70,18 @@ class Trainer():
         es0_vip = alle[:, 2] # o_t
         es1_vip = alle[:, 3] # o_t+1
 
+        # e0_target = copy.deepcopy(e0)
+        # eg_target = copy.deepcopy(eg)
+        # es0_vip_target = copy.deepcopy(es0_vip)
+        # es1_vip_target = copy.deepcopy(es1_vip)
+
         full_loss = 0
 
-        # possible idea: now, we have o_0,g,t,t+1， they are obs.
-        # we may need to use these obs to integrate with IQL.
         # obs_dim = e0.shape[1]
         # print(e0.shape) # [32, 2]
-        # r is b_reward
-        dt0 = model.module.dist(es0_vip, eg)
-        dt1 = model.module.dist(es1_vip, eg)
+
         with torch.no_grad():
-            target_q = self.q_target(dt0, dt1)  # torch.flatten()
+            target_v = self.v_target(es0_vip, eg)
             # next_v = self.vf(es1_vip)
         
         ## LP Loss
@@ -92,40 +93,39 @@ class Trainer():
         full_loss += model.module.l1weight * l1loss
         t3 = time.time()
 
-        #### maybe change here !!!!!!! not use dual 
-        ### We may need or change the V value here
-        ### -(S(et+1,g) - S(et, g)) ？  goal-conditioned
-
         ## VIP Loss 
         V_0 = model.module.sim(e0, eg) # -||phi(s) - phi(g)||_2
         terminal = model.module.sim(eg, eg)
         r =  b_reward.to(V_0.device) # R(s;g) = (s==g) - 1 
-        V_s = model.module.sim(es0_vip, eg)
-        V_s_next = model.module.sim(es1_vip, eg)
-       
-        # target_q = V_s_next
-        # adv = target_q - V_s
-        V_loss = (V_s.mean() - asymmetric_l2_loss(target_q.detach(), self.tau))**2
-
+        # V_s = model.module.sim(es0_vip, eg)
+        # V_s_next = model.module.sim(es1_vip, eg)
+        V_s = self.vf(es0_vip, eg)
+        V_s_next = self.vf(es1_vip, eg)
+        
         # Update Q function     # function (6)
         targets = r + (1. - terminal.float()) * self.discount * V_s_next.detach() # target V_s_next
-        qs = self.qf.both(dt0, dt1)
-        # V_loss = (V_s.mean() - asymmetric_l2_loss(self.qf(dt0, dt1), self.tau))**2
-        # V_loss = torch.mean(self.qf(dt0, dt1) - r - self.discount * V_s) ** 2
+        qs = self.qf.both(es0_vip, es1_vip, eg)
+        vip_loss = (V_s.mean() - asymmetric_l2_loss(self.qf(es0_vip, es1_vip, eg), self.tau))**2
+
+        v_loss = torch.mean(self.qf(es0_vip, es1_vip, eg) - r - self.discount * V_s) ** 2
+        v_loss = Variable(v_loss, requires_grad=True)
+
         q_loss = sum(F.mse_loss(q.float(), targets.float()) for q in qs) / len(qs)
         q_loss = Variable(q_loss, requires_grad=True)
         self.q_optimizer.zero_grad(set_to_none=True)
-        q_loss.backward()   # retain_graph=True 
+        q_loss.backward(retain_graph=True)   # retain_graph=True 
         self.q_optimizer.step()
         
-# update V
-# update target V
+        # update V
+        self.v_optimizer.zero_grad(set_to_none=True)
+        v_loss.backward(retain_graph=True)
+        self.v_optimizer.step()
 
-        # Update target Q network
-        update_exponential_moving_average(self.q_target, self.qf, self.alpha)
+        # update target V
+        update_exponential_moving_average(self.v_target, self.vf, self.alpha)
         
-        metrics['vip_loss'] = V_loss.item()
-        full_loss += V_loss.detach()
+        metrics['vip_loss'] = vip_loss.item()
+        full_loss += vip_loss.detach()
         # full_loss += q_loss
         metrics['full_loss'] = full_loss.item()
         t4 = time.time()
@@ -137,4 +137,4 @@ class Trainer():
         t5 = time.time()
 
         st = f"Load time {t1-t0}, Batch time {t2-t1}, Encode and LP time {t3-t2}, VIP time {t4-t3}, Backprop time {t5-t4}"
-        return metrics,st
+        return metrics, st
