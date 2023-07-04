@@ -105,7 +105,7 @@ class Trainer():
         # Update Q function     # function (6)
         targets = r + (1. - terminal.float()) * self.discount * V_s_next.detach() # target V_s_next
         qs = self.qf.both(es0_vip, es1_vip, eg)
-        vip_loss = (V_s.mean() - asymmetric_l2_loss(self.qf(es0_vip, es1_vip, eg), self.tau))**2
+        vip_loss = (target_v.mean() - asymmetric_l2_loss(self.qf(es0_vip, es1_vip, eg), self.tau))**2
 
         v_loss = torch.mean(self.qf(es0_vip, es1_vip, eg) - r - self.discount * V_s) ** 2
         v_loss = Variable(v_loss, requires_grad=True)
