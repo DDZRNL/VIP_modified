@@ -20,14 +20,17 @@ from vip.utils.data_loaders import VIPBuffer
 from vip.utils.logger import Logger
 import time
 import itertools
+import copy
+import time
 
 torch.backends.cudnn.benchmark = True
+DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
+#code to change: No parallel
 def make_network(cfg):
     model =  hydra.utils.instantiate(cfg)
     print("Let's use", torch.cuda.device_count(), "GPUs!")
-    model = torch.nn.DataParallel(model)
+    # model = torch.nn.DataParallel(model)
     return model.cuda()
 
 class Workspace:
@@ -44,7 +47,9 @@ class Workspace:
         print("Creating Dataloader")
         train_iterable = VIPBuffer(datasource=self.cfg.dataset, datapath=self.cfg.datapath, num_workers=self.cfg.num_workers, doaug=self.cfg.doaug)
         val_iterable = VIPBuffer(datasource=self.cfg.dataset, datapath=self.cfg.datapath, num_workers=self.cfg.num_workers, doaug=0)
-
+        
+        print("The cfg is: ", self.cfg)
+        print("The batch size is: ", self.cfg.batch_size)
         self.train_loader = iter(torch.utils.data.DataLoader(train_iterable,
                                          batch_size=self.cfg.batch_size,
                                          num_workers=self.cfg.num_workers,
@@ -83,33 +88,22 @@ class Workspace:
         train_until_step = utils.Until(self.cfg.train_steps, 1)
         eval_freq = self.cfg.eval_freq
         eval_every_step = utils.Every(eval_freq, 1)
+        obs_dim = self.cfg.agent.output_dim
+        v_hidden_dim = self.cfg.v_hidden_dim
+        q_hidden_dim = self.cfg.q_hidden_dim
         
-        #train_loader_copy1, train_loader_copy2 = itertools.tee(self.train_loader, 2)
-        # b_im, b_r = next(train_loader_copy2)
-        # print("The batch_im is: ", b_im)    # torch.Size([32, 4, 3, 224, 224])
-        # print("The batch_r is: ", br)     # torch.Size([32])
-        ### get the dim of obs
-        # bs = b_im.shape[0]
-        # img_stack_size = b_im.shape[1]
-        # H = b_im.shape[-2]
-        # W = b_im.shape[-1]
-        # b_im_r = b_im.reshape(bs*img_stack_size, 3, H, W)
-        # alles = self.model(b_im_r)
-        # alle = alles.reshape(bs, img_stack_size, -1)
-        # e0 = alle[:, 0] # initial, o_0
-        # obs_dim = e0.shape[1]   # torch.flatten(e0).shape 
-        # # print("The obs dim is: ", list(obs_dim))
-
-        optimizer_factory=lambda params: torch.optim.Adam(params, lr=3e-4)
-        trainer = Trainer(eval_freq, 2, optimizer_factory)
+        target_model = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
+        optimizer_factory=lambda params: torch.optim.Adam(params, lr=1e-4)
+        trainer = Trainer(target_model, eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim)
 
         ## Training Loop
         print("Begin Training")
         while train_until_step(self.global_step):
             ## Sample Batch
             t0 = time.time()
-            batch_f, batch_rewards = next(self.train_loader)   # self.train_loader
+            batch_f, batch_rewards = next(self.train_loader)
             t1 = time.time()
+            # print('train_vip 程序运行时间:%s毫秒' % ((t1 - t0)*1000))
             metrics, st = trainer.update(self.model, (batch_f.cuda(), batch_rewards), self.global_step)
             t2 = time.time()
             self.logger.log_metrics(metrics, self.global_frame, ty='train')
