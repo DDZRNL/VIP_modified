@@ -113,7 +113,7 @@ class Trainer():
         # targets = r + (1. - terminal) * self.discount * V_s_next.detach()
         qs = self.qf(es0_vip, es1_vip, eg) # self.qf.both(es0_vip, es1_vip, eg)
         ### Q_loss = Q(s,s’,g) - （r + γV_target(s’,g).detach()） 
-        q_loss = torch.mean(qs -(r + (1. - terminal) * self.discount * V_s_next_target.detach())) # torch.mean
+        q_loss = F.mse_loss(qs -(r + (1. - terminal) * self.discount * V_s_next_target.detach())) # torch.mean
         q_loss = Variable(q_loss, requires_grad=True)
         self.q_optimizer.zero_grad(set_to_none=True)
         q_loss.backward(retain_graph=True)   # retain_graph=True 
