@@ -7,6 +7,7 @@ import numpy as np
 from numpy.core.numeric import full
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.modules.activation import Sigmoid
 from torch.nn.modules.linear import Identity
 import torchvision
@@ -37,11 +38,11 @@ class VIP(nn.Module):
         ## Visual Encoder
         # hyperparameter
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 512), # ant 111
+            nn.Linear(input_dim, 32), # HC 17; ant 27
             nn.ReLU(),
-            nn.Linear(512, 1024),
+            nn.Linear(32, 16),
             nn.ReLU(),
-            nn.Linear(1024, output_dim),
+            nn.Linear(16, output_dim),
         )
 
         self.mlp.train()
@@ -52,8 +53,8 @@ class VIP(nn.Module):
 
     ## Forward Call (im --> representation)
     def forward(self, obs):
-        
-        h = self.mlp(obs)
+        obs_p = F.normalize(obs, dim = 0)
+        h = self.mlp(obs_p)
         return h
 
     def sim(self, tensor1, tensor2):
