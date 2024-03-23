@@ -38,11 +38,11 @@ class VIP(nn.Module):
         ## Visual Encoder
         # hyperparameter
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, 32), # HC 17; ant 27
+            nn.Linear(input_dim, 256), # HC 17; ant 27
             nn.ReLU(),
-            nn.Linear(32, 16),
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(16, output_dim),
+            nn.Linear(256, output_dim),  # 256
         )
 
         self.mlp.train()
@@ -53,7 +53,7 @@ class VIP(nn.Module):
 
     ## Forward Call (im --> representation)
     def forward(self, obs):
-        obs_p = F.normalize(obs, dim = 0)
+        obs_p = F.normalize(obs, dim = 1)
         h = self.mlp(obs_p)
         return h
 
