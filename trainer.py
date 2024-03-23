@@ -20,7 +20,6 @@ from IQL.iql import ImplicitQLearning
 from IQL.policy import GaussianPolicy, DeterministicPolicy
 from IQL.value_functions import TwinQ, ValueFunction
 
-import torchqmet
 from IQL.util import mlp
 
 DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -48,7 +47,7 @@ class Trainer():
         # self.v_optimizer = optimizer_factory(self.vf.parameters())
         self.target_model = model_target
 
-    def update(self, model, batch, step, eval=False):
+    def update(self, model, encoder_q, batch, step, eval=False):
         t0 = time.time()
         metrics = dict()
         if eval:
@@ -74,6 +73,12 @@ class Trainer():
         eg_target = alles_target[:, 1] # final, o_g
         es0_vip_target = alles_target[:, 2] # o_t
         es1_vip_target = alles_target[:, 3] # o_t+1
+
+        
+        alles_q = encoder_q(b_im)
+        eg_q = alles_q[:, 1] # final, o_g
+        es0_vip_q = alles_q[:, 2] # o_t
+        es1_vip_q = alles_q[:, 3] # o_t+1
 
         full_loss = 0
 
@@ -119,16 +124,20 @@ class Trainer():
             update_exponential_moving_average(self.target_model, model, self.alpha)
         t5 = time.time()
 
-        # Update Q function     # function (6)
+        # Update Q function   
         # targets = r + (1. - terminal) * self.discount * V_s_next.detach()
-        qs = self.qf(es0_vip, es1_vip, eg) # self.qf.both(es0_vip, es1_vip, eg)
+        qs = self.qf(es0_vip_q, es1_vip_q, eg_q) # self.qf.both(es0_vip, es1_vip, eg)
         ### Q_loss = Q(s,s’,g) - （r + γV_target(s’,g).detach()） 
         # q_loss = MSE(qs -(r + (1. - terminal) * self.discount * V_s_next_target.detach())) # torch.mean
         q_loss = F.mse_loss(qs, (r + (1. - terminal) * self.discount * V_s_next_target.detach()))
         q_loss = Variable(q_loss, requires_grad=True)
-        self.q_optimizer.zero_grad(set_to_none=True)
-        q_loss.backward(retain_graph=True)   # retain_graph=True 
-        self.q_optimizer.step()
+        if not eval:
+            encoder_q.encoder_opt.zero_grad(set_to_none=True)
+            self.q_optimizer.zero_grad(set_to_none=True)
+            q_loss.backward(retain_graph=True)   # retain_graph=True
+            encoder_q.encoder_opt.step()
+            self.q_optimizer.step()
+        
         metrics['q_loss'] = q_loss.item()
 
         st = f"Load time {t1-t0}, Batch time {t2-t1}, Encode and LP time {t3-t2}, VIP time {t4-t3}, Backprop time {t5-t4}"
