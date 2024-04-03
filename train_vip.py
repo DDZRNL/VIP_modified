@@ -92,10 +92,11 @@ class Workspace:
         v_hidden_dim = self.cfg.v_hidden_dim
         q_hidden_dim = self.cfg.q_hidden_dim
         
-        target_model = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
+        # target_model = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
         encoder_q = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
+        encoder_q_target = copy.deepcopy(encoder_q).to(DEFAULT_DEVICE)
         optimizer_factory=lambda params: torch.optim.Adam(params, lr=1e-4)
-        trainer = Trainer(target_model, eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim)
+        trainer = Trainer(encoder_q_target, eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim)
 
         ## Training Loop
         print("Begin Training")
