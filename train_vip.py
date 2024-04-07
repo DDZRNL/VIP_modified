@@ -93,10 +93,10 @@ class Workspace:
         q_hidden_dim = self.cfg.q_hidden_dim
         
         # target_model = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
-        encoder_q = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
-        encoder_q_target = copy.deepcopy(encoder_q).to(DEFAULT_DEVICE)
+        encoder_psi = copy.deepcopy(self.model).to(DEFAULT_DEVICE)
+        # encoder_psi_target = copy.deepcopy(encoder_psi).to(DEFAULT_DEVICE)
         optimizer_factory=lambda params: torch.optim.Adam(params, lr=1e-4)
-        trainer = Trainer(encoder_q_target, eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim)
+        trainer = Trainer(eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim)
 
         ## Training Loop
         print("Begin Training")
@@ -106,7 +106,7 @@ class Workspace:
             batch_f, batch_rewards = next(self.train_loader)
             t1 = time.time()
             # print('train_vip 程序运行时间:%s毫秒' % ((t1 - t0)*1000))
-            metrics, st = trainer.update(self.model, encoder_q, (batch_f.cuda(), batch_rewards), self.global_step)
+            metrics, st = trainer.update(self.model, encoder_psi, (batch_f.cuda(), batch_rewards), self.global_step)
             t2 = time.time()
             self.logger.log_metrics(metrics, self.global_frame, ty='train')
 
@@ -117,7 +117,7 @@ class Workspace:
             if eval_every_step(self.global_step):
                 with torch.no_grad():
                     batch_f, batch_rewards = next(self.val_loader)
-                    metrics, st = trainer.update(self.model, encoder_q,(batch_f.cuda(), batch_rewards), self.global_step, eval=True)
+                    metrics, st = trainer.update(self.model, encoder_psi,(batch_f.cuda(), batch_rewards), self.global_step, eval=True)
                     self.logger.log_metrics(metrics, self.global_frame, ty='eval')
                     print("EVAL", self.global_step, metrics)
 
