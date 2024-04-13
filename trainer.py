@@ -43,7 +43,7 @@ class Trainer():
         self.alpha=0.005
         self.qf = TwinQ(state_dim, hidden_dim=q_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE) #.float()
         self.qf_target = copy.deepcopy(self.qf).requires_grad_(False).to(DEFAULT_DEVICE)
-        self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=0).to(DEFAULT_DEVICE) #.float()
+        self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=1).to(DEFAULT_DEVICE) #.float()
         # self.vf_target = copy.deepcopy(self.vf).to(DEFAULT_DEVICE)
         self.q_optimizer = optimizer_factory(self.qf.parameters())
         self.v_optimizer = optimizer_factory(self.vf.parameters())
