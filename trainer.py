@@ -36,25 +36,25 @@ def update_exponential_moving_average(target, source, alpha):
         target_param.data.mul_(1. - alpha).add_(source_param.data, alpha=alpha)
 
 class Trainer():
-    def __init__(self, eval_freq, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim):
+    def __init__(self, eval_freq, state_dim, obs_dim, optimizer_factory, v_hidden_dim, q_hidden_dim):
         self.eval_freq = eval_freq
         self.tau = 0.9
         self.discount=0.99
         self.alpha=0.005
-        self.qf = TwinQ(obs_dim, hidden_dim=q_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE)
-        self.qf_target = copy.deepcopy(self.qf).to(DEFAULT_DEVICE)
-        # self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE)
+        self.qf = TwinQ(state_dim, hidden_dim=q_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE) #.float()
+        self.qf_target = copy.deepcopy(self.qf).requires_grad_(False).to(DEFAULT_DEVICE)
+        # self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=1).to(DEFAULT_DEVICE) #.float()
         # self.vf_target = copy.deepcopy(self.vf).to(DEFAULT_DEVICE)
         self.q_optimizer = optimizer_factory(self.qf.parameters())
         # self.v_optimizer = optimizer_factory(self.vf.parameters())
 
-    def update(self, encoder_phi, encoder_psi, batch, step, eval=False):
+    def update(self, model, encoder_psi, batch, step, eval=False):
         t0 = time.time()
         metrics = dict()
         if eval:
-            encoder_phi.eval()
+            model.eval()
         else:
-            encoder_phi.train()
+            model.train()
 
         t1 = time.time()
         ## Batch
@@ -62,41 +62,52 @@ class Trainer():
         t2 = time.time()
 
         ## Encode Start and End Frames
-        alles = encoder_phi(b_im)
+        alles = model(b_im)
         
         e0 = alles[:, 0] # initial, o_0
-        eg_phi = alles[:, 1] # final, o_g
+        eg = alles[:, 1] # final, o_g
         es0_vip = alles[:, 2] # o_t
         es1_vip = alles[:, 3] # o_t+1
 
-        alles_psi = encoder_psi(b_im)
-        eg_psi = alles_psi[:, 1] # final, o_g
+        ## Encoder g as psi
+        alles = encoder_psi(b_im)
+        
+        eg_psi = alles[:, 1] # final, o_g
+
+        s0 = b_im[:, 0]
+        sg = b_im[:, 1]
+        s1 = b_im[:, 2]
+        s2 = b_im[:, 3]
 
         full_loss = 0
-
         # LP Loss
         l2loss = torch.linalg.norm(alles, ord=2, dim=-1).mean()
         l1loss = torch.linalg.norm(alles, ord=1, dim=-1).mean()
         metrics['l2loss'] = l2loss.item()
         metrics['l1loss'] = l1loss.item()
-        full_loss += encoder_phi.l2weight * l2loss
-        full_loss += encoder_phi.l1weight * l1loss
+        full_loss += model.l2weight * l2loss
+        full_loss += model.l1weight * l1loss
         t3 = time.time()
 
-        ## V Loss 
-        V_0 = torch.mul(e0, eg_psi)  # -||phi(s) - phi(g)||_2
-        r =  b_reward.to(V_0.device)    # R(s;g) = (s==g) - 1  
-        V_s = torch.mul(es0_vip, eg_psi)
-        V_s_next = torch.mul(es1_vip, eg_psi)
+        with torch.no_grad():
+            target_q =  self.qf_target(s1, s2, sg)
+            V_s_next = torch.mul(es1_vip, eg_psi)
 
-        if(torch.equal(es0_vip, eg_phi)):
+        ## V Loss 
+        V_0 = torch.mul(e0, eg_psi)
+        r =  b_reward.to(V_0.device).float() # R(s;g) = (s==g) - 1  
+        V_s = torch.mul(es0_vip, eg_psi)
+        
+        metrics['V_value'] = V_s.mean().item()
+
+        if(torch.equal(es0_vip, eg)):
             terminal = 1.0
         else:
             terminal = 0.0
         
         ### Adv = Q(s,s’,g).detach - V(s,g) 
         ### V_loss = Expectile loss(adv, tu)   
-        Adv = self.qf_target(es0_vip, es1_vip, eg_psi).detach() - V_s
+        Adv = target_q - V_s
         V_loss = asymmetric_l2_loss(Adv, self.tau)
         
         metrics['V_loss'] = V_loss.item()
@@ -105,24 +116,30 @@ class Trainer():
         t4 = time.time()
 
         if not eval:
-            encoder_phi.encoder_opt.zero_grad()
-            encoder_psi.encoder_opt.zero_grad()
+            model.encoder_opt.zero_grad(set_to_none=True)
+            encoder_psi.encoder_opt.zero_grad(set_to_none=True)
             full_loss.backward()
-            encoder_phi.encoder_opt.step()
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(self.vf.parameters(), max_norm=1.0)
+            model.encoder_opt.step()
             encoder_psi.encoder_opt.step()
         t5 = time.time()
 
         # Update Q function   
         targets = r + (1. - terminal) * self.discount * V_s_next.detach()
-        qs = self.qf(es0_vip, es1_vip, eg_psi) # self.qf.both(es0_vip, es1_vip, eg)
+        qs = self.qf.both(s1, s2, sg) 
+        metrics['Q_value'] = (sum(q for q in qs) / len(qs)).mean().item()
         ### Q_loss = Q(s,s’,g) - （r + γV_target(s’,g).detach()） 
+        # q_loss = MSE(qs -(r + (1. - terminal) * self.discount * V_s_next_target.detach())) # torch.mean
         # q_loss = F.mse_loss(qs, (r + (1. - terminal) * self.discount * V_s_next.detach()))
         q_loss = sum(F.mse_loss(q, targets) for q in qs) / len(qs)
-        q_loss = Variable(q_loss, requires_grad=True)
         if not eval:
-            self.q_optimizer.zero_grad()
-            q_loss.backward(retain_graph=True)   # retain_graph=True
+            self.q_optimizer.zero_grad(set_to_none=True)
+            q_loss.backward()   # retain_graph=True
+            # torch.nn.utils.clip_grad_norm_(self.qf.parameters(), max_norm=1.0)
             self.q_optimizer.step()
+
+            # Update target Q network
             update_exponential_moving_average(self.qf_target, self.qf, self.alpha)
         
         metrics['q_loss'] = q_loss.item()
