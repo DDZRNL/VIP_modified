@@ -91,12 +91,12 @@ class Trainer():
 
         with torch.no_grad():
             target_q =  self.qf_target(s1, s2, sg)
-            V_s_next = torch.mul(es1_vip, eg_psi)
+            V_s_next = (es1_vip - eg_psi).mean()
 
         ## V Loss 
-        V_0 = torch.mul(e0, eg_psi)
+        V_0 = (e0 - eg_psi).mean()
         r =  b_reward.to(V_0.device).float() # R(s;g) = (s==g) - 1  
-        V_s = torch.mul(es0_vip, eg_psi)
+        V_s = (es0_vip - eg_psi).mean()
         
         metrics['V_value'] = V_s.mean().item()
 
