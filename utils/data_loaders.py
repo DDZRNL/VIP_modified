@@ -27,99 +27,69 @@ from torchvision.utils import save_image
 import json
 import random
 
+import d4rl
+import gym
+from utils.utils import return_range, torchify
 
-def get_ind(vid, index, ds="ego4d"):
-    if ds == "ego4d":
-        return torchvision.io.read_image(f"{vid}{index:06}.jpg")
-    else:
-        try:
-            return torchvision.io.read_image(f"{vid}/{index}.jpg")
-        except: 
-            return torchvision.io.read_image(f"{vid}/{index}.png")
+def get_env_and_dataset(env_name, max_episode_steps=1000):
+    env = gym.make(env_name)
+    dataset = d4rl.qlearning_dataset(env)
+
+    if any(s in env_name for s in ('halfcheetah', 'hopper', 'walker2d', 'ant')):
+        min_ret, max_ret = return_range(dataset, max_episode_steps)
+        dataset['rewards'] /= (max_ret - min_ret)
+        dataset['rewards'] *= max_episode_steps
+    elif 'antmaze' in env_name:
+        dataset['rewards'] -= 1.
+
+    for k, v in dataset.items():
+        dataset[k] = v #torchify(v)
+
+    return dataset
 
 ## Data Loader for VIP
 class VIPBuffer(IterableDataset):
-    def __init__(self, datasource='ego4d', datapath=None, num_workers=10, doaug = "none"):
+    def __init__(self, task, datatype="expert", num_workers=10, doaug = "none"):
         self._num_workers = max(1, num_workers)
-        self.datasource = datasource
-        self.datapath = datapath
-        assert(datapath is not None)
+        self.task = task
+        self.datatype = datatype
+        self.env_name = task + "-" + datatype + "-v2"
+        assert(task is not None)
         self.doaug = doaug
         
-        # Augmentations
-        self.preprocess = torch.nn.Sequential(
-                        transforms.Resize(256),
-                        transforms.CenterCrop(224)
-                )
-        if doaug in ["rc", "rctraj"]:
-            self.aug = torch.nn.Sequential(
-                transforms.RandomResizedCrop(224, scale = (0.2, 1.0)),
-            )
-        else:
-            self.aug = lambda a : a
-
         # Load Data
-        if "ego4d" == self.datasource:
-            print("Ego4D")
-            self.manifest = pd.read_csv(f"{self.datapath}/manifest.csv")
-            print(self.manifest)
-            self.ego4dlen = len(self.manifest)
+        self.dataset = get_env_and_dataset(self.env_name)
 
     def _sample(self):
-        # Sample a video from datasource
-        if self.datasource == 'ego4d':
-            vidid = np.random.randint(0, self.ego4dlen)
-            m = self.manifest.iloc[vidid]
-            vidlen = m["len"]
-            vid = m["path"]
-        else: 
-            video_paths = glob.glob(f"{self.datapath}/[0-9]*")
-            num_vid = len(video_paths)
-            #print("!!! video_path: ", video_paths)
 
-            video_id = np.random.randint(0, int(num_vid)) 
-            vid = f"{video_paths[video_id]}"
-
-            # Video frames must be .png or .jpg
-            vidlen = len(glob.glob(f'{vid}/*.png'))
-            if vidlen == 0:
-                vidlen = len(glob.glob(f'{vid}/*.jpg'))
+        total_length = len(self.dataset['observations'])
 
         # Sample (o_t, o_k, o_k+1, o_T) for VIP training
-        start_ind = np.random.randint(0, vidlen-2)
-        end_ind = np.random.randint(start_ind+1, vidlen)
+        start_ind = np.random.randint(0, total_length-2)
+        end_ind = np.random.randint(start_ind+1, total_length)
 
-        s0_ind_vip = np.random.randint(start_ind, end_ind)
-        s1_ind_vip = min(s0_ind_vip+1, end_ind)
+        s0_ind = np.random.randint(start_ind, end_ind)
+        # s1_ind_vip = min(s0_ind_vip+1, end_ind)
         
-        # Self-supervised reward (this is always -1)
-        reward = float(s0_ind_vip == end_ind) - 1
+        reward = self.dataset["rewards"][s0_ind]
 
-        if self.doaug == "rctraj":
-            ### Encode each image in the video at once the same way
-            im0 = get_ind(vid, start_ind, self.datasource) 
-            img = get_ind(vid, end_ind, self.datasource)
-            imts0_vip = get_ind(vid, s0_ind_vip, self.datasource)
-            imts1_vip = get_ind(vid, s1_ind_vip, self.datasource)
-            
-            allims = torch.stack([im0, img, imts0_vip, imts1_vip], 0)
-            allims_aug = self.aug(allims / 255.0) * 255.0
-
-            im0 = allims_aug[0]
-            img = allims_aug[1]
-            imts0_vip = allims_aug[2]
-            imts1_vip = allims_aug[3]
-
+        ### Encode each image individually
+        if(self.task == 'ant'):
+            im0 = self.dataset['observations'][start_ind][:27]
+            img = self.dataset['observations'][end_ind][:27]
+            imts0 = self.dataset['observations'][s0_ind][:27]
+            imts1 = self.dataset['next_observations'][s0_ind][:27]
         else:
-            ### Encode each image individually
-            im0 = self.aug(get_ind(vid, start_ind, self.datasource) / 255.0) * 255.0
-            img = self.aug(get_ind(vid, end_ind, self.datasource) / 255.0) * 255.0
-            imts0_vip = self.aug(get_ind(vid, s0_ind_vip, self.datasource) / 255.0) * 255.0
-            imts1_vip = self.aug(get_ind(vid, s1_ind_vip, self.datasource) / 255.0) * 255.0
+            im0 = self.dataset['observations'][start_ind]
+            img = self.dataset['observations'][end_ind]
+            imts0 = self.dataset['observations'][s0_ind]
+            imts1 = self.dataset['next_observations'][s0_ind]
 
-        im = torch.stack([im0, img, imts0_vip, imts1_vip])
-        im = self.preprocess(im)
-        return (im, reward)
+        terminal = self.dataset["terminals"][s0_ind]
+
+        im = torch.stack([torch.tensor(im0), torch.tensor(img), torch.tensor(imts0), torch.tensor(imts1)])
+        #im = self.preprocess(im)
+        return (im, reward, terminal)
 
     def __iter__(self):
         while True:
