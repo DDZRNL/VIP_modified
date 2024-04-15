@@ -58,7 +58,7 @@ class Trainer():
 
         t1 = time.time()
         ## Batch
-        b_im, b_reward = batch
+        b_im, b_reward, b_terminal = batch
         t2 = time.time()
 
         ## Encode Start and End Frames
@@ -89,16 +89,12 @@ class Trainer():
             V_s_next = self.vf(es1_vip, eg)
 
         ## V Loss 
-        V_0 = self.vf(e0, eg)  # -||phi(s) - phi(g)||_2
-        r =  b_reward.to(V_0.device).float() # R(s;g) = (s==g) - 1  
+        V_0 = self.vf(e0, eg) 
+        r =  b_reward.to(V_0.device).float()
+        terminal = b_terminal.to(V_0.device).float()
         V_s = self.vf(es0_vip, eg)
         
         metrics['V_value'] = V_s.mean().item()
-
-        if(torch.equal(es0_vip, eg)):
-            terminal = 1.0
-        else:
-            terminal = 0.0
         
         ### Adv = Q(s,s’,g).detach - V(s,g) 
         ### V_loss = Expectile loss(adv, tu)   
@@ -121,11 +117,10 @@ class Trainer():
         t5 = time.time()
 
         # Update Q function   
-        targets = r + (1. - terminal) * self.discount * V_s_next.detach()
+        targets = r + (1. - terminal.float()) * self.discount * V_s_next.detach()
         qs = self.qf.both(s1, s2, sg) 
         metrics['Q_value'] = (sum(q for q in qs) / len(qs)).mean().item()
         ### Q_loss = Q(s,s’,g) - （r + γV_target(s’,g).detach()） 
-        # q_loss = MSE(qs -(r + (1. - terminal) * self.discount * V_s_next_target.detach())) # torch.mean
         # q_loss = F.mse_loss(qs, (r + (1. - terminal) * self.discount * V_s_next.detach()))
         q_loss = sum(F.mse_loss(q, targets) for q in qs) / len(qs)
         if not eval:
