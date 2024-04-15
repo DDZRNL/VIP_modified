@@ -15,6 +15,7 @@ from omegaconf import OmegaConf
 from torch import distributions as pyd
 from torch.distributions.utils import _standard_normal
 
+DEFAULT_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class eval_mode:
     def __init__(self, *models):
@@ -162,3 +163,26 @@ def schedule(schdl, step):
                 mix = np.clip((step - duration1) / duration2, 0.0, 1.0)
                 return (1.0 - mix) * final1 + mix * final2
     raise NotImplementedError(schdl)
+
+
+def return_range(dataset, max_episode_steps):
+    returns, lengths = [], []
+    ep_ret, ep_len = 0., 0
+    for r, d in zip(dataset['rewards'], dataset['terminals']):
+        ep_ret += float(r)
+        ep_len += 1
+        if d or ep_len == max_episode_steps:
+            returns.append(ep_ret)
+            lengths.append(ep_len)
+            ep_ret, ep_len = 0., 0
+    # returns.append(ep_ret)    # incomplete trajectory
+    lengths.append(ep_len)      # but still keep track of number of steps
+    assert sum(lengths) == len(dataset['rewards'])
+    return min(returns), max(returns)
+
+def torchify(x):
+    x = torch.from_numpy(x)
+    if x.dtype is torch.float64:
+        x = x.float()
+    x = x.to(device=DEFAULT_DEVICE)
+    return x
