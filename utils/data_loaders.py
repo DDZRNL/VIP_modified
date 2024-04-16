@@ -59,14 +59,13 @@ class VIPBuffer(IterableDataset):
         
         # Load Data
         self.dataset = get_env_and_dataset(self.env_name)
+        self.total_length = len(self.dataset['observations'])
 
     def _sample(self):
 
-        total_length = len(self.dataset['observations'])
-
         # Sample (o_t, o_k, o_k+1, o_T) for VIP training
-        start_ind = np.random.randint(0, total_length-2)
-        end_ind = np.random.randint(start_ind+1, total_length)
+        start_ind = np.random.randint(0, self.total_length-2)
+        end_ind = np.random.randint(start_ind+1, self.total_length)
 
         s0_ind = np.random.randint(start_ind, end_ind)
         # s1_ind_vip = min(s0_ind_vip+1, end_ind)
