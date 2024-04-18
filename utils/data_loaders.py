@@ -40,13 +40,13 @@ class VIPBuffer(IterableDataset):
         with open(self.datapath, 'rb') as f:
             self.data_paths = pickle.load(f)
         
-        # Load Data
-
+        # self.flat_dataset = self.data_paths.flatten()
+        
     def _sample(self):
 
         # Sample a video from datasource
         num_vid = len(self.data_paths)
-
+        
         video_id = np.random.randint(0, int(num_vid))
         vid = self.data_paths[video_id]
 
@@ -54,23 +54,50 @@ class VIPBuffer(IterableDataset):
 
         # Sample (o_t, o_k, o_k+1, o_T) for VIP training
         start_ind = np.random.randint(0, vidlen-2)
-        end_ind = np.random.randint(start_ind+1, vidlen)
+        # end_ind = np.random.randint(start_ind+1, vidlen)
 
-        s0_ind_vip = np.random.randint(start_ind, end_ind)
-        s1_ind_vip = min(s0_ind_vip+1, end_ind)
+        s0_ind = np.random.randint(start_ind, vidlen-1)
+        s1_ind = min(s0_ind+1, vidlen-1)
         
-        # Self-supervised reward (this is always -1)
-        reward = float(s0_ind_vip == end_ind) - 1
-
         ### Encode each image individually
         im0 = vid[start_ind]
-        img = vid[end_ind]
-        imts0_vip = vid[s0_ind_vip]
-        imts1_vip = vid[s1_ind_vip]
+        # img = vid[end_ind]
+        imts0 = vid[s0_ind]
+        imts1 = vid[s1_ind]
 
-        # print("The data loader:")
-        im = torch.stack([torch.tensor(im0), torch.tensor(img), torch.tensor(imts0_vip), torch.tensor(imts1_vip)])
-        return (im, reward)
+        prob = np.random.uniform(0, 1)
+        if(prob <= 0.2):    # 20% choose goal as next_state
+            end_ind = s1_ind
+            img = vid[end_ind]
+        elif(0.2 < prob and prob <=0.7):    # 50% choose goal as random state after curruent state in the same traj
+            end_ind = np.random.randint(s0_ind+1, vidlen)
+            img = vid[end_ind]
+        else:   # 30% choose random goal
+            # img = np.random.choice(self.flat_dataset)
+            sublist = random.choice(self.data_paths)
+            img = random.choice(sublist)
+
+        # encode as torch
+        im0 = torch.tensor(im0)
+        img = torch.tensor(img)
+        imts0 = torch.tensor(imts0)
+        imts1 = torch.tensor(imts1)
+
+        # Self-supervised reward (this is always -1)
+        if(torch.equal(imts0, img)):
+            reward = 0
+        else:
+            reward = -1
+        # reward = float(s0_ind == end_ind) - 1
+
+        im = torch.stack([im0, img, imts0, imts1])
+
+        if(s1_ind == vidlen-1):
+            terminal = 1.0
+        else:
+            terminal = 0.0
+
+        return (im, reward, terminal)
 
     def __iter__(self):
         while True:
