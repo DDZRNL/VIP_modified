@@ -43,8 +43,7 @@ class Trainer():
         self.alpha=0.005
         self.qf = TwinQ(state_dim, hidden_dim=q_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE) #.float()
         self.qf_target = copy.deepcopy(self.qf).requires_grad_(False).to(DEFAULT_DEVICE)
-        self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=1).to(DEFAULT_DEVICE) #.float()
-        # self.vf_target = copy.deepcopy(self.vf).to(DEFAULT_DEVICE)
+        self.vf = ValueFunction(obs_dim, hidden_dim=v_hidden_dim, n_hidden=2).to(DEFAULT_DEVICE) #.float()
         self.q_optimizer = optimizer_factory(self.qf.parameters())
         self.v_optimizer = optimizer_factory(self.vf.parameters())
 
@@ -58,7 +57,7 @@ class Trainer():
 
         t1 = time.time()
         ## Batch
-        b_im, b_reward = batch
+        b_im, b_reward, b_terminal = batch
         t2 = time.time()
 
         ## Encode Start and End Frames
@@ -90,15 +89,12 @@ class Trainer():
 
         ## V Loss 
         V_0 = self.vf(e0, eg)  # -||phi(s) - phi(g)||_2
-        r =  b_reward.to(V_0.device).float() # R(s;g) = (s==g) - 1  
+        r =  b_reward.to(V_0.device).float() # R(s;g) = (s==g) - 1
+        terminal = b_terminal.to(V_0.device).float()
         V_s = self.vf(es0_vip, eg)
         
         metrics['V_value'] = V_s.mean().item()
 
-        if(torch.equal(es0_vip, eg)):
-            terminal = 1.0
-        else:
-            terminal = 0.0
         
         ### Adv = Q(s,s’,g).detach - V(s,g) 
         ### V_loss = Expectile loss(adv, tu)   
