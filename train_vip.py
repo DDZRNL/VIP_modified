@@ -104,10 +104,10 @@ class Workspace:
         while train_until_step(self.global_step):
             ## Sample Batch
             t0 = time.time()
-            batch_f, batch_rewards = next(self.train_loader)
+            batch_f, batch_rewards, batch_terminals = next(self.train_loader)
             t1 = time.time()
             # print('train_vip 程序运行时间:%s毫秒' % ((t1 - t0)*1000))
-            metrics, st = trainer.update(self.model, (batch_f.cuda(), batch_rewards), self.global_step)
+            metrics, st = trainer.update(self.model, (batch_f.cuda(), batch_rewards, batch_terminals), self.global_step)
             t2 = time.time()
             self.logger.log_metrics(metrics, self.global_frame, ty='train')
 
@@ -117,8 +117,8 @@ class Workspace:
                 
             if eval_every_step(self.global_step):
                 with torch.no_grad():
-                    batch_f, batch_rewards = next(self.val_loader)
-                    metrics, st = trainer.update(self.model, (batch_f.cuda(), batch_rewards), self.global_step, eval=True)
+                    batch_f, batch_rewards, batch_terminals = next(self.val_loader)
+                    metrics, st = trainer.update(self.model, (batch_f.cuda(), batch_rewards, batch_terminals), self.global_step, eval=True)
                     self.logger.log_metrics(metrics, self.global_frame, ty='eval')
                     print("EVAL", self.global_step, metrics)
 
